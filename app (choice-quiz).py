@@ -3,9 +3,9 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 import time
-import difflib  # ✅ 追加：類似度判定
+import difflib
 
-st.title("4択クイズ（CSV版・類似度選択肢あり）")
+st.title("4択クイズ（CSV版・改良済み）")
 
 # ==== CSV読み込み ====
 uploaded_file = st.file_uploader("問題CSVをアップロードしてください（列名: 問題, 答え）", type=["csv"])
@@ -24,7 +24,7 @@ if not {"問題", "答え"}.issubset(df.columns):
 
 # ==== セッション初期化 ====
 ss = st.session_state
-if "remaining" not in ss: ss.remaining = df.to_dict("records")
+if "remaining" not in ss: ss.remaining = df.to_dict("records")[:]  # 全部コピー
 if "current" not in ss: ss.current = None
 if "phase" not in ss: ss.phase = "quiz"   # quiz / feedback / done
 if "last_outcome" not in ss: ss.last_outcome = None
@@ -35,12 +35,12 @@ def next_question():
         ss.current = None
         ss.phase = "done"
         return
-    ss.current = random.choice(ss.remaining)
+    ss.current = random.choice(ss.remaining)  # 残っている中からランダム
     ss.phase = "quiz"
     ss.last_outcome = None
 
 def reset_quiz():
-    ss.remaining = df.to_dict("records")
+    ss.remaining = df.to_dict("records")[:]  # 20題すべて復活
     ss.current = None
     ss.phase = "quiz"
     ss.last_outcome = None
@@ -69,22 +69,28 @@ if ss.phase == "quiz" and ss.current:
     current = ss.current
     st.subheader(f"問題: {current['問題']}")
 
-    # --- 4択生成（類似度で選択） ---
+    # --- 4択生成（類似度で選択 + 重複排除） ---
     correct_answer = current["答え"]
     other_answers = [r["答え"] for r in df.to_dict("records") if r != current]
 
-    # 類似度スコアを計算
+    # 類似度計算
     scored = [(ans, difflib.SequenceMatcher(None, correct_answer, ans).ratio()) for ans in other_answers]
-
-    # 類似度の高い順に並べ、上位から3つ選ぶ（足りなければランダム追加）
     scored_sorted = sorted(scored, key=lambda x: x[1], reverse=True)
-    distractors = [s[0] for s in scored_sorted[:3]]
 
-    if len(distractors) < 3:
-        extra = random.sample(other_answers, 3 - len(distractors))
+    distractors = [s[0] for s in scored_sorted[:10]]  # 類似度トップ10を候補
+    distractors = list(dict.fromkeys(distractors))  # 重複除去
+
+    # 3つ選ぶ（不足時は残りからランダム追加）
+    if len(distractors) >= 3:
+        distractors = random.sample(distractors, 3)
+    else:
+        need = 3 - len(distractors)
+        extra = random.sample([a for a in other_answers if a not in distractors], need)
         distractors.extend(extra)
 
+    # 選択肢作成（正解を追加してシャッフル）
     choices = distractors + [correct_answer]
+    choices = list(dict.fromkeys(choices))  # 念のため重複排除
     random.shuffle(choices)
 
     choice_map = {str(i+1): ans for i, ans in enumerate(choices)}
@@ -110,7 +116,7 @@ if ss.phase == "quiz" and ss.current:
 
     if submitted and ans in choice_map:
         if choice_map[ans] == correct_answer:
-            ss.remaining = [q for q in ss.remaining if q != current]
+            ss.remaining = [q for q in ss.remaining if q != current]  # 正解したら削除
             ss.last_outcome = ("correct", correct_answer)
         else:
             ss.last_outcome = ("wrong", correct_answer)
