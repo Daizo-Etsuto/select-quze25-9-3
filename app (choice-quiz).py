@@ -5,7 +5,7 @@ import streamlit.components.v1 as components
 import time
 import difflib
 
-st.title("4択クイズ（CSV版・安定版）")
+st.title("4択クイズ（CSV版・模試風選択肢）")
 
 # ==== CSV読み込み ====
 uploaded_file = st.file_uploader("問題CSVをアップロードしてください（列名: 問題, 答え）", type=["csv"])
@@ -26,7 +26,7 @@ if not {"問題", "答え"}.issubset(df.columns):
 ss = st.session_state
 if "remaining" not in ss: ss.remaining = df.to_dict("records")[:]
 if "current" not in ss: ss.current = None
-if "choices" not in ss: ss.choices = None  # ✅ 選択肢を保存
+if "choices" not in ss: ss.choices = None
 if "phase" not in ss: ss.phase = "quiz"
 if "last_outcome" not in ss: ss.last_outcome = None
 if "start_time" not in ss: ss.start_time = time.time()
@@ -39,7 +39,7 @@ def next_question():
     ss.current = random.choice(ss.remaining)
     ss.phase = "quiz"
     ss.last_outcome = None
-    ss.choices = None  # ✅ 新しい問題のとき選択肢をリセット
+    ss.choices = None
 
 def reset_quiz():
     ss.remaining = df.to_dict("records")[:]
@@ -48,6 +48,41 @@ def reset_quiz():
     ss.phase = "quiz"
     ss.last_outcome = None
     ss.start_time = time.time()
+
+def generate_distractors(correct_answer, current, df):
+    other_answers = [r["答え"] for r in df.to_dict("records") if r != current]
+
+    distractors = []
+
+    # --- 数字（年号など）の場合 ---
+    if correct_answer.isdigit():
+        year = int(correct_answer)
+        numeric_candidates = [a for a in other_answers if a.isdigit()]
+        close_years = [a for a in numeric_candidates if abs(int(a) - year) <= 5]
+        distractors.extend(close_years)
+
+    # --- 文字列の場合（類似度高いもの） ---
+    else:
+        scored = [(ans, difflib.SequenceMatcher(None, correct_answer, ans).ratio()) for ans in other_answers]
+        scored_sorted = sorted(scored, key=lambda x: x[1], reverse=True)
+        distractors.extend([s[0] for s in scored_sorted[:10]])
+
+    # 重複削除
+    distractors = list(dict.fromkeys(distractors))
+
+    # 正解が混じっていたら除去
+    if correct_answer in distractors:
+        distractors.remove(correct_answer)
+
+    # 3つに絞る（足りなければランダム補充）
+    if len(distractors) >= 3:
+        distractors = random.sample(distractors, 3)
+    else:
+        need = 3 - len(distractors)
+        extra = random.sample([a for a in other_answers if a not in distractors], need)
+        distractors.extend(extra)
+
+    return distractors
 
 # ==== 全問終了 ====
 if ss.phase == "done":
@@ -74,29 +109,11 @@ if ss.phase == "quiz" and ss.current:
 
     correct_answer = current["答え"]
 
-    # --- 選択肢を1回だけ生成 ---
     if ss.choices is None:
-        other_answers = [r["答え"] for r in df.to_dict("records") if r != current]
-
-        # 類似度計算
-        scored = [(ans, difflib.SequenceMatcher(None, correct_answer, ans).ratio()) for ans in other_answers]
-        scored_sorted = sorted(scored, key=lambda x: x[1], reverse=True)
-
-        distractors = [s[0] for s in scored_sorted[:10]]
-        distractors = list(dict.fromkeys(distractors))  # 重複排除
-
-        if len(distractors) >= 3:
-            distractors = random.sample(distractors, 3)
-        else:
-            need = 3 - len(distractors)
-            extra = random.sample([a for a in other_answers if a not in distractors], need)
-            distractors.extend(extra)
-
+        distractors = generate_distractors(correct_answer, current, df)
         choices = distractors + [correct_answer]
-        choices = list(dict.fromkeys(choices))  # 念のため重複排除
         random.shuffle(choices)
-
-        ss.choices = choices  # ✅ 保存して再利用
+        ss.choices = choices
 
     choice_map = {str(i+1): ans for i, ans in enumerate(ss.choices)}
 
