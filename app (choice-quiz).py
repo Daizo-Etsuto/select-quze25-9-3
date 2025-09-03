@@ -3,8 +3,9 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 import time
+import difflib  # ✅ 追加：類似度判定
 
-st.title("4択クイズ（CSV版）")
+st.title("4択クイズ（CSV版・類似度選択肢あり）")
 
 # ==== CSV読み込み ====
 uploaded_file = st.file_uploader("問題CSVをアップロードしてください（列名: 問題, 答え）", type=["csv"])
@@ -68,11 +69,22 @@ if ss.phase == "quiz" and ss.current:
     current = ss.current
     st.subheader(f"問題: {current['問題']}")
 
-    # --- 4択生成 ---
+    # --- 4択生成（類似度で選択） ---
     correct_answer = current["答え"]
     other_answers = [r["答え"] for r in df.to_dict("records") if r != current]
-    choices = random.sample(other_answers, min(3, len(other_answers)))
-    choices.append(correct_answer)
+
+    # 類似度スコアを計算
+    scored = [(ans, difflib.SequenceMatcher(None, correct_answer, ans).ratio()) for ans in other_answers]
+
+    # 類似度の高い順に並べ、上位から3つ選ぶ（足りなければランダム追加）
+    scored_sorted = sorted(scored, key=lambda x: x[1], reverse=True)
+    distractors = [s[0] for s in scored_sorted[:3]]
+
+    if len(distractors) < 3:
+        extra = random.sample(other_answers, 3 - len(distractors))
+        distractors.extend(extra)
+
+    choices = distractors + [correct_answer]
     random.shuffle(choices)
 
     choice_map = {str(i+1): ans for i, ans in enumerate(choices)}
